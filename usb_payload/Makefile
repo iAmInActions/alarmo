@@ -37,6 +37,7 @@ TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source
 INCLUDES	:=	source
+DATA		:=	data
 
 # Add required driver source files
 SOURCE_FILES	:=	STM32CubeH7/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cortex.c \
@@ -109,6 +110,7 @@ export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+			$(foreach dir,$(DATA),$(CURDIR)/$(dir)) \
 			$(CURDIR)/STM32CubeH7/Drivers/STM32H7xx_HAL_Driver/Src
 
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
@@ -116,6 +118,7 @@ export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
 CFILES		+=	$(foreach f,$(HAL_SOURCE),$(notdir $(f)))
 CFILES		+=	$(foreach f,$(SOURCE_FILES),$(notdir $(f)))
@@ -135,7 +138,8 @@ endif
 #-------------------------------------------------------------------------------
 
 export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES 	:=	$(OFILES_BIN) $(OFILES_SRC)
+export OFILES 		:=	$(OFILES_SRC)
+export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
 export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
@@ -180,6 +184,8 @@ $(OUTPUT).elf: $(OFILES)
 	@echo linking ... $(notdir $@)
 	$(SILENTCMD)$(LD) $(LDFLAGS) $(OFILES) $(LIBPATHS) $(LIBS) -o $@ $(ERROR_FILTER)
 
+$(OFILES_SRC) : $(HFILES_BIN)
+
 #---------------------------------------------------------------------------------
 %.o: %.cpp
 	$(SILENTMSG) $(notdir $<)
@@ -196,6 +202,12 @@ $(OUTPUT).elf: $(OFILES)
 	$(SILENTCMD)$(CC) -MMD -MP -MF $(DEPSDIR)/$*.d -x assembler-with-cpp $(CPPFLAGS) $(ASFLAGS) -c $< -o $@ $(ERROR_FILTER)
 
 #---------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+%_png.h :	%.png
+#-------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	$(SILENTCMD)python3 $(TOPDIR)/imgconv.py $< > $@
 
 -include $(DEPENDS)
 

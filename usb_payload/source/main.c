@@ -4,7 +4,7 @@
 #include "system_stm32h7xx.h"
 #include "lcd.h"
 
-#include "cat.inc"
+#include "cat_png.h"
 
 static void FMC_Init(void);
 static void TIM3_Init(void);
@@ -43,7 +43,7 @@ int main(void)
     LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 0, 0);
 
     // Draw cat
-    LCD_DrawScreenBuffer(image_data, sizeof(image_data));
+    LCD_DrawScreenBuffer(cat_png_data, sizeof(cat_png_data));
 
     // Turn on the display
     LCD_DISPON();
