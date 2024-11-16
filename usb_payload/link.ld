@@ -120,4 +120,8 @@ SECTIONS
     }
 
     __image_end = .;
+
+    . = ALIGN(8);
+    PROVIDE ( end = . );
+    PROVIDE ( _end = . );
 }

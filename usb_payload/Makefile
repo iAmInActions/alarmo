@@ -78,12 +78,12 @@ CFLAGS	+=
 
 ASFLAGS	:=	$(MACHDEP)
 
-LDFLAGS	=	-nostartfiles -nodefaultlibs \
+LDFLAGS	=	$(MACHDEP) -specs=nano.specs \
 		-Wl,-Map,$(notdir $*.map) \
 		-Wl,-T $(TOPDIR)/link.ld \
 		-Wl,--no-warn-rwx-segments
 
-LIBS	:=	-lgcc
+LIBS	:=	-lc -lm -lnosys
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -g
