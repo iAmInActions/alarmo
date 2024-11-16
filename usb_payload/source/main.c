@@ -2,15 +2,26 @@
 #include <stm32h7xx_hal.h>
 #include <stm32h7xx_ll_rcc.h>
 #include "system_stm32h7xx.h"
-#include "lcd.h"
+#include "libalarmo/lcd.h"
+#include "libalarmo/input.h"
 
 #include "cat_png.h"
 
+static void DMA_Init(void);
 static void FMC_Init(void);
 static void TIM3_Init(void);
+static void MDMA_Init(void);
+static void ADC_Init(void);
+
+static void hsv2rgb(float h, float s, float v, float *r, float *g, float *b);
 
 SRAM_HandleTypeDef fmcHandle;
 TIM_HandleTypeDef tim3Handle;
+MDMA_HandleTypeDef mdmaHandle;
+ADC_HandleTypeDef adcHandle;
+DMA_HandleTypeDef dmaHandle;
+ADC_HandleTypeDef adc2Handle;
+DMA_HandleTypeDef dma2Handle;
 
 int main(void)
 {
@@ -24,11 +35,23 @@ int main(void)
     // SystemClock_Config();
     // PeriphClock_Config();
 
+    // Enable DMA streams
+    DMA_Init();
+
     // Initialize FMC for interfacing with the LCD
     FMC_Init();
 
+    // Initialize MDMA for DMA LCD transfers
+    MDMA_Init();
+
     // Initialize timer 3 for the LCD backlight
     TIM3_Init();
+
+    // Enable the ADCs for the dial wheel
+    ADC_Init();
+
+    // Initialize inputs
+    INPUT_Init();
 
     // Initialize the LCD
     LCD_Init();
@@ -48,8 +71,50 @@ int main(void)
     // Turn on the display
     LCD_DISPON();
 
-    while (1)
-        ;
+    // Main loop
+    float lastDial = INPUT_GetDial();
+    while (1) {
+        uint32_t buttons = INPUT_GetButtons();
+        float dial = INPUT_GetDial();
+
+        if (buttons & BUTTON_DIAL) {
+            LCD_DrawScreenBuffer(cat_png_data, sizeof(cat_png_data));
+        }
+
+        if (buttons & BUTTON_BACK) {
+            LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 255);
+        }
+
+        if (buttons & BUTTON_NOTIFICATION) {
+            LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 0, 0);
+        }
+
+        if (fabs(lastDial - dial) >= 1.5f) {
+            float r, g, b;
+            hsv2rgb(dial / 360.0f, 1.0f, 1.0f, &r, &g, &b);
+            LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, r * 255, g * 255, b * 255);
+            lastDial = dial;
+        }
+    }
+}
+
+static void DMA_Init(void)
+{
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    __HAL_RCC_DMA2_CLK_ENABLE();
+
+    HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+    HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+    HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
+    HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
+    HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 }
 
 static void FMC_Init(void)
@@ -145,4 +210,181 @@ static void TIM3_Init(void)
     }
 
     TIMx_PWM_MspInit(&tim3Handle);
+}
+
+static void MDMA_Init(void)
+{
+    __HAL_RCC_MDMA_CLK_ENABLE();
+
+    mdmaHandle.Instance = MDMA_Channel0;
+
+    mdmaHandle.Init.BufferTransferLength     = 0x80;
+    mdmaHandle.Init.DataAlignment            = MDMA_DATAALIGN_PACKENABLE;
+    mdmaHandle.Init.Request                  = MDMA_REQUEST_SW;
+    mdmaHandle.Init.DestinationInc           = MDMA_DEST_INC_DISABLE;
+    mdmaHandle.Init.SourceDataSize           = MDMA_SRC_DATASIZE_HALFWORD;
+    mdmaHandle.Init.DestDataSize             = MDMA_DEST_DATASIZE_HALFWORD;
+    mdmaHandle.Init.TransferTriggerMode      = MDMA_BLOCK_TRANSFER;
+    mdmaHandle.Init.Priority                 = MDMA_PRIORITY_VERY_HIGH;
+    mdmaHandle.Init.Endianness               = MDMA_LITTLE_BYTE_ENDIANNESS_EXCHANGE;
+    mdmaHandle.Init.SourceInc                = MDMA_SRC_INC_HALFWORD;
+    mdmaHandle.Init.SourceBurst              = MDMA_SOURCE_BURST_SINGLE;
+    mdmaHandle.Init.DestBurst                = MDMA_DEST_BURST_SINGLE;
+    mdmaHandle.Init.SourceBlockAddressOffset = 0x0;
+    mdmaHandle.Init.DestBlockAddressOffset   = 0x0;
+
+    if (HAL_MDMA_Init(&mdmaHandle) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    // TODO
+    // HAL_NVIC_SetPriority(MDMA_IRQn, 5, 0);
+    // HAL_NVIC_EnableIRQ(MDMA_IRQn);
+}
+
+static void ADC_Init(void)
+{
+    RCC_PeriphCLKInitTypeDef RCC_PeriphCLKInitStruct = { 0 };
+    RCC_PeriphCLKInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+    RCC_PeriphCLKInitStruct.AdcClockSelection    = RCC_ADCCLKSOURCE_PLL2;
+    HAL_RCCEx_PeriphCLKConfig(&RCC_PeriphCLKInitStruct);
+
+    adcHandle.Instance = ADC1;
+
+    adcHandle.Init.Overrun                            = ADC_OVR_DATA_OVERWRITTEN;
+    adcHandle.Init.LeftBitShift                       = ADC_LEFTBITSHIFT_NONE;
+    adcHandle.Init.OversamplingMode                   = ENABLE;
+    adcHandle.Init.Oversampling.Ratio                 = 0x10;
+    adcHandle.Init.Oversampling.RightBitShift         = ADC_RIGHTBITSHIFT_4;
+    adcHandle.Init.Oversampling.TriggeredMode         = ADC_TRIGGEREDMODE_SINGLE_TRIGGER;
+    adcHandle.Init.Oversampling.OversamplingStopReset = ADC_REGOVERSAMPLING_CONTINUED_MODE;
+    adcHandle.Init.ExternalTrigConv                   = ADC_SOFTWARE_START;
+    adcHandle.Init.ExternalTrigConvEdge               = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    adcHandle.Init.ConversionDataManagement           = ADC_CONVERSIONDATA_DMA_CIRCULAR;
+    adcHandle.Init.Resolution                         = ADC_RESOLUTION_16B;
+    adcHandle.Init.ScanConvMode                       = ADC_SCAN_ENABLE;
+    adcHandle.Init.EOCSelection                       = ADC_EOC_SINGLE_CONV;
+    adcHandle.Init.LowPowerAutoWait                   = DISABLE;
+    adcHandle.Init.ContinuousConvMode                 = ENABLE;
+    adcHandle.Init.NbrOfConversion                    = 0x3;
+    adcHandle.Init.DiscontinuousConvMode              = DISABLE;
+    adcHandle.Init.ClockPrescaler                     = ADC_CLOCK_ASYNC_DIV8;
+    if (HAL_ADC_Init(&adcHandle) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    ADC_MultiModeTypeDef multiMode = { 0 };
+    multiMode.Mode = ADC_MODE_INDEPENDENT;
+    if (HAL_ADCEx_MultiModeConfigChannel(&adcHandle, &multiMode) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    ADC_ChannelConfTypeDef channelConf = { 0 };
+    channelConf.OffsetSignedSaturation = DISABLE;
+    channelConf.Offset                 = 0x0;
+    channelConf.OffsetNumber           = ADC_OFFSET_NONE;
+    channelConf.SingleDiff             = ADC_SINGLE_ENDED;
+    channelConf.SamplingTime           = ADC_SAMPLETIME_64CYCLES_5;
+    channelConf.Rank                   = ADC_REGULAR_RANK_1;
+    channelConf.Channel                = ADC_CHANNEL_4;
+    if (HAL_ADC_ConfigChannel(&adcHandle, &channelConf) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    channelConf.Rank = ADC_REGULAR_RANK_2;
+    if (HAL_ADC_ConfigChannel(&adcHandle, &channelConf) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    channelConf.Rank    = ADC_REGULAR_RANK_3;
+    channelConf.Channel = ADC_CHANNEL_10;
+    if (HAL_ADC_ConfigChannel(&adcHandle, &channelConf) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    HAL_ADCEx_Calibration_Start(&adcHandle, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+
+    adc2Handle.Instance = ADC2;
+
+    adc2Handle.Init.Oversampling.RightBitShift         = ADC_RIGHTBITSHIFT_4;
+    adc2Handle.Init.Oversampling.TriggeredMode         = ADC_TRIGGEREDMODE_SINGLE_TRIGGER;
+    adc2Handle.Init.ConversionDataManagement           = ADC_CONVERSIONDATA_DMA_CIRCULAR;
+    adc2Handle.Init.Overrun                            = ADC_OVR_DATA_OVERWRITTEN;
+    adc2Handle.Init.LeftBitShift                       = ADC_LEFTBITSHIFT_NONE;
+    adc2Handle.Init.OversamplingMode                   = ENABLE;
+    adc2Handle.Init.Oversampling.Ratio                 = 0x10;
+    adc2Handle.Init.Oversampling.OversamplingStopReset = ADC_REGOVERSAMPLING_CONTINUED_MODE;
+    adc2Handle.Init.ExternalTrigConv                   = ADC_SOFTWARE_START;
+    adc2Handle.Init.ExternalTrigConvEdge               = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    adc2Handle.Init.ScanConvMode                       = ADC_SCAN_ENABLE;
+    adc2Handle.Init.EOCSelection                       = ADC_EOC_SINGLE_CONV;
+    adc2Handle.Init.LowPowerAutoWait                   = DISABLE;
+    adc2Handle.Init.ContinuousConvMode                 = ENABLE;
+    adc2Handle.Init.Resolution                         = ADC_RESOLUTION_16B;
+    adc2Handle.Init.NbrOfConversion                    = 0x2;
+    adc2Handle.Init.DiscontinuousConvMode              = DISABLE;
+    adc2Handle.Init.ClockPrescaler                     = ADC_CLOCK_ASYNC_DIV8;
+    if (HAL_ADC_Init(&adc2Handle) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    channelConf.SingleDiff              = ADC_SINGLE_ENDED;
+    channelConf.OffsetSignedSaturation  = DISABLE;
+    channelConf.OffsetNumber            = ADC_OFFSET_NONE;
+    channelConf.Offset                  = 0x0;
+    channelConf.SamplingTime            = ADC_SAMPLETIME_64CYCLES_5;
+    channelConf.Rank                    = ADC_REGULAR_RANK_1;
+    channelConf.Channel                 = ADC_CHANNEL_9;
+    if (HAL_ADC_ConfigChannel(&adc2Handle, &channelConf) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    channelConf.Rank = ADC_REGULAR_RANK_2;
+    if (HAL_ADC_ConfigChannel(&adc2Handle, &channelConf) != HAL_OK) {
+        while (1)
+            ;
+    }
+
+    HAL_ADCEx_Calibration_Start(&adc2Handle, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+}
+
+static void hsv2rgb(float h, float s, float v, float *r, float *g, float *b)
+{
+    float p, q, t, fract;
+    int i;
+
+    i = (int) floor(h * 6); 
+	fract = h * 6.0f - i;
+	p = v * (1.0f - s);
+	q = v * (1.0f - fract * s);
+	t = v * (1.0f - (1 - fract) * s);
+
+	switch (i % 6) {
+		case 0:
+            *r = v; *g = t; *b = p;
+            break;
+		case 1:
+            *r = q; *g = v; *b = p;
+            break;
+		case 2:
+            *r = p; *g = v; *b = t;
+            break;
+		case 3:
+            *r = p; *g = q; *b = v;
+            break;
+		case 4:
+            *r = t; *g = p; *b = v;
+            break;
+		case 5:
+            *r = v; *g = p; *b = q;
+            break;
+	}
 }

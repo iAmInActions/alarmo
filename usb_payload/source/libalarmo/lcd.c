@@ -6,6 +6,8 @@
 #include "main.h"
 #include <stm32h7xx_hal.h>
 
+#define USE_DMA 1
+
 #define LCD_COMMAND (*(volatile uint8_t *) 0xc0000000)
 
 #define LCD_RS_PIN (6)
@@ -245,6 +247,8 @@ void LCD_RDID(uint32_t* outId)
 
 void LCD_Init(void)
 {
+    HAL_MDMA_Abort(&mdmaHandle);
+
     LCD_Deselect();
 
     HAL_GPIO_WritePin(GPIOG, GPIO_PIN_4, GPIO_PIN_RESET);
@@ -265,9 +269,36 @@ void LCD_Init(void)
 
 static void LCD_DrawData(const uint8_t *source, uint32_t size)
 {
+#if USE_DMA == 1
+    // flush cache for dma
+    SCB_CleanDCache_by_Addr((uint32_t *)source, size);
+
+    uint32_t offset = 0;
+    while (size > 0) {
+        uint32_t to_copy = size;
+        if (to_copy > 65536U) {
+            to_copy = 65536U;
+        }
+
+        if (HAL_MDMA_Start(&mdmaHandle, (uint32_t)source + offset, (uint32_t) &LCD_DATA16, to_copy, 1) != HAL_OK) {
+            while (1)
+                ;            
+        }
+
+        // TODO instead of polling, perform irq driven transfers
+        if (HAL_MDMA_PollForTransfer(&mdmaHandle, HAL_MDMA_FULL_TRANSFER, 1000) != HAL_OK) {
+            while (1)
+                ;
+        }
+
+        size -= to_copy;
+        offset += to_copy;
+    }
+#else // Software
     for (uint32_t i = 0; i < size; i += 2) {
         LCD_DATA16 = (source[i] << 8) | source[i + 1];
     }
+#endif
 }
 
 void LCD_DrawRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint8_t r, uint8_t g, uint8_t b)
@@ -285,6 +316,9 @@ void LCD_DrawRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint8_t r,
         color_buffer[(i*3)+1] = g;
         color_buffer[(i*3)  ] = b;
     }
+
+    // flush cache for dma
+    SCB_CleanDCache_by_Addr((uint32_t *)&color_buffer[0], rowsize);
 
     LCD_RASET(SCREEN_WIDTH - (x0 + x1), SCREEN_WIDTH - x0 - 1);
     LCD_CASET(y0, (y1 + y0) - 1);
@@ -308,6 +342,9 @@ void LCD_DrawRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint8_t r,
 
 void LCD_DrawScreenBuffer(const uint8_t *buffer, uint32_t size)
 {
+    // flush cache for dma
+    SCB_CleanDCache_by_Addr((uint32_t *)buffer, size);
+
     LCD_RASET(0, SCREEN_WIDTH - 1);
     LCD_CASET(0, SCREEN_HEIGHT - 1);
 

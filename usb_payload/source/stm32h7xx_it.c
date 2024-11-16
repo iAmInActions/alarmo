@@ -157,6 +157,21 @@ void SysTick_Handler(void)
 {
 }*/
 
+void MDMA_IRQHandler(void)
+{
+  HAL_MDMA_IRQHandler(&mdmaHandle);
+}
+
+void DMA1_Stream1_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(adcHandle.DMA_Handle);
+}
+
+void DMA1_Stream2_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(adc2Handle.DMA_Handle);
+}
+
 /**
   * @}
   */
