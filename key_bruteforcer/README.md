@@ -5,6 +5,21 @@ It also contains a x86 PC tool to bruteforce the key.
 The old payload which bruteforces the key on the Alarmo itself can be found [here](./old/README.md).
 
 ## Usage
+
+### Using the USB payload
+- Build or download the latest USB payload.
+- Run `make bruteforcer` to compile the PC tool.
+- Hold down the confirm, back and notification button on the Alarmo at the same time.
+- While holding down all three buttons, plug in the USB cable to your PC.  
+  The dial button on top of the Alarmo should light up red and a drive should appear on the PC.
+- Copy the `a.bin` from the USB payload to the newly appeared drive.
+- Copy the `MarkFile` from the USB payload to the drive.  
+  The alarmo should disconnect from the PC and a picture of a cat is displayed on the screen.
+- Press the back button on the Alarmo to display the QR code.
+- Scan the QR code and copy the containing text to your PC.
+- Run `./bruteforcer <insert QR text here>` to start bruteforcing the key. This will take a few minutes.
+
+### Using SWD
 - Update the `FIRMWARE_VERSION` define in the `main.c` to match the software version the Alarmo is on.
 - Run `make` to compile the payload and the PC tool.
 - Boot the Alarmo normally and wait until you can see the clock screen.

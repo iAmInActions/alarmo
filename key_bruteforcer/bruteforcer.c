@@ -16,28 +16,32 @@ typedef struct {
 } aes_data_t;
 
 static void aes128_encrypt(const uint8_t *key, const uint8_t *plaintext, uint8_t *ciphertext);
+static int hex2bin(const char *str, void *bytes, size_t maxsize);
 
 int main(int argc, char const *argv[])
 {
     if (argc != 2) {
-        printf("Usage: %s <aes_data.bin>\n", argv[0]);
+        printf("Usage: %s <aes_data.bin or hex string>\n", argv[0]);
         return 1;
     }
 
-    // Read in AES data from file
+    // Try to read in AES data from file
+    aes_data_t data;
     FILE *f = fopen(argv[1], "rb");
     if (!f) {
-        printf("Failed to open %s\n", argv[1]);
-        return 1;
-    }
+        if (hex2bin(argv[1], &data, sizeof(data)) != sizeof(data)) {
+            printf("Failed to open file or invalid hex string\n");
+            return 1;
+        }
+    } else {
+        if (fread(&data, 1, sizeof(data), f) != sizeof(data)) {
+            fclose(f);
+            printf("Failed to read file\n");
+            return 1;
+        }
 
-    aes_data_t data;
-    if (fread(&data, 1, sizeof(data), f) != sizeof(data)) {
-        printf("Failed to read file\n");
-        return 1;
+        fclose(f);
     }
-
-    fclose(f);
 
     // Save start time
     time_t start_time = time(NULL);
@@ -99,6 +103,44 @@ int main(int argc, char const *argv[])
     printf("\n");
 
     return 0;
+}
+
+static inline int char2bin(char c)
+{
+    if((c >= 'a') && (c <= 'f'))
+        return c - 'a' + 10;
+    if((c >= '0') && (c <= '9'))
+        return c - '0';
+    if((c >= 'A') && (c <= 'F'))
+        return c - 'A' + 10;
+
+    return -1;
+}
+
+static int hex2bin(const char *str, void *bytes, size_t maxsize)
+{
+    uint8_t *bytes_ptr = (uint8_t *)bytes;
+    size_t bytes_in = 0;
+
+    // Only accept hex pairs
+    size_t len = strlen(str);
+    if ((len & 1) != 0 || (len / 2) > maxsize) {
+        return -1;
+    }
+
+    for (; str[0] != '\0'; str += 2) {
+        int char0 = char2bin(str[0]);
+        int char1 = char2bin(str[1]);
+
+        // Check for invalid characters
+        if (char0 == -1 || char1 == -1) {
+            return -1;
+        }
+
+        bytes_ptr[bytes_in++] = (char0 << 4) | char1;
+    }
+
+    return bytes_in;
 }
 
 // From https://stackoverflow.com/a/32313659/11511475

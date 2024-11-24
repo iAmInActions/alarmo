@@ -1,11 +1,20 @@
 #include "main.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include <stm32h7xx_hal.h>
 #include <stm32h7xx_ll_rcc.h>
 #include "system_stm32h7xx.h"
 #include "libalarmo/lcd.h"
 #include "libalarmo/input.h"
+#include "qrcodegen.h"
 
 #include "cat_png.h"
+
+typedef struct {
+    uint32_t iv[4];
+    uint32_t encrypted_parts[4][4];
+} aes_data_t;
 
 static void DMA_Init(void);
 static void FMC_Init(void);
@@ -15,6 +24,10 @@ static void ADC_Init(void);
 
 static void hsv2rgb(float h, float s, float v, float *r, float *g, float *b);
 
+static void CRYP_AES_CTR_Encrypt(uint32_t *counter, void *outData, uint32_t outSize, const void *inData, uint32_t inSize);
+static void get_aes_data(aes_data_t *aesData);
+static void generate_qr(const void *data, size_t size, uint8_t *screenBuffer);
+
 SRAM_HandleTypeDef fmcHandle;
 TIM_HandleTypeDef tim3Handle;
 MDMA_HandleTypeDef mdmaHandle;
@@ -22,6 +35,8 @@ ADC_HandleTypeDef adcHandle;
 DMA_HandleTypeDef dmaHandle;
 ADC_HandleTypeDef adc2Handle;
 DMA_HandleTypeDef dma2Handle;
+
+static uint8_t qrBuffer[SCREEN_WIDTH * SCREEN_HEIGHT * 3];
 
 int main(void)
 {
@@ -71,30 +86,41 @@ int main(void)
     // Turn on the display
     LCD_DISPON();
 
+    // Generate QR code
+    aes_data_t aesData;
+    get_aes_data(&aesData);
+    generate_qr(&aesData, sizeof(aesData), qrBuffer);
+
     // Main loop
     float lastDial = INPUT_GetDial();
     while (1) {
         uint32_t buttons = INPUT_GetButtons();
         float dial = INPUT_GetDial();
 
+        // Draw cat for dial button presses
         if (buttons & BUTTON_DIAL) {
             LCD_DrawScreenBuffer(cat_png_data, sizeof(cat_png_data));
         }
 
+        // Draw qr code for back button presses
         if (buttons & BUTTON_BACK) {
-            LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 255);
+            LCD_DrawScreenBuffer(qrBuffer, sizeof(qrBuffer));
         }
 
+        // Draw red screen for notif button presses
         if (buttons & BUTTON_NOTIFICATION) {
             LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 0, 0);
         }
 
+        // Fade through colors for dial turns
         if (fabs(lastDial - dial) >= 1.5f) {
             float r, g, b;
             hsv2rgb(dial / 360.0f, 1.0f, 1.0f, &r, &g, &b);
             LCD_DrawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, r * 255, g * 255, b * 255);
             lastDial = dial;
         }
+
+        HAL_Delay(10);
     }
 }
 
@@ -387,4 +413,111 @@ static void hsv2rgb(float h, float s, float v, float *r, float *g, float *b)
             *r = v; *g = p; *b = q;
             break;
 	}
+}
+
+static void CRYP_ProcessData(uint32_t* outData, uint32_t outCount, const uint32_t* inData, uint32_t inCount)
+{
+    // Enable CRYP
+    CRYP->CR |= CRYP_CR_CRYPEN;
+
+    uint32_t inOffset = 0;
+    uint32_t outOffset = 0;
+    while (outOffset < outCount) {
+        // Push data if input FIFO isn't full
+        while (inOffset < inCount && (CRYP->SR & CRYP_SR_IFNF)) {
+            CRYP->DIN = inData[inOffset++];
+        }
+
+        // Read data if output FIFO isn't empty
+        while (CRYP->SR & CRYP_SR_OFNE) {
+            outData[outOffset++] = CRYP->DOUT;
+        }
+    }
+
+    // Disable CRYP
+    CRYP->CR &= ~CRYP_CR_CRYPEN;
+
+    // Flush CRYP
+    CRYP->CR |= CRYP_CR_FFLUSH;
+}
+
+static void CRYP_AES_CTR_Encrypt(uint32_t *counter, void *outData, uint32_t outSize, const void *inData, uint32_t inSize)
+{
+    // Setup datatype and algomode (AES-CTR)
+    CRYP->CR &= ~(CRYP_CR_DATATYPE_0 | CRYP_CR_ALGOMODE_0 | CRYP_CR_ALGOMODE_1 | CRYP_CR_ALGOMODE_2);
+    CRYP->CR |= CRYP_CR_ALGOMODE_AES_CTR;
+
+    // Setup direction (Encrypt)
+    CRYP->CR &= ~CRYP_CR_ALGODIR;
+
+    // Setup key size (128)
+    CRYP->CR &= ~CRYP_CR_KEYSIZE;
+
+    // Clear lowest IV word
+    CRYP->IV1RR = 0;
+
+    CRYP_ProcessData((uint32_t*)outData, outSize / 4, (const uint32_t*)inData, inSize / 4);
+}
+
+static void get_aes_data(aes_data_t *aesData)
+{
+    // store IV
+    aesData->iv[0] = __builtin_bswap32(CRYP->IV0LR);
+    aesData->iv[1] = __builtin_bswap32(CRYP->IV0RR);
+    aesData->iv[2] = __builtin_bswap32(CRYP->IV1LR);
+    aesData->iv[3] = 0; // for the counter just store 0
+
+    // Clear zero buffer
+    uint32_t zeroes[4] = { 0 };
+
+    for (int i = 0; i < 4; i++) {
+        // Start blanking out parts of the key after the first round
+        if (i > 0) {
+            (&CRYP->K0LR)[4 + (i - 1)] = 0;
+        }
+
+        // Encrypt zeroes
+        uint32_t counter = 0;
+        CRYP_AES_CTR_Encrypt(&counter, aesData->encrypted_parts[i], sizeof(aesData->encrypted_parts[i]), zeroes, sizeof(zeroes));
+    }
+}
+
+static void generate_qr(const void *data, size_t size, uint8_t *screenBuffer)
+{
+    char* hexBuffer = malloc(size*2 + 1);
+    if (!hexBuffer) {
+        memset(screenBuffer, 0xFF, SCREEN_WIDTH * SCREEN_HEIGHT * 3);
+        return;
+    }
+
+    char* hexPtr = hexBuffer;
+    for (size_t i = 0; i < size; i++) {
+        hexPtr += sprintf(hexPtr, "%02x", *((uint8_t *)data + i));
+    }
+
+    uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
+    uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
+    if (!qrcodegen_encodeText(hexBuffer, tempBuffer, qr0, qrcodegen_Ecc_MEDIUM, qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true)) {
+        free(hexBuffer);
+        memset(screenBuffer, 0xFF, SCREEN_WIDTH * SCREEN_HEIGHT * 3);
+        return;
+    }
+
+    free(hexBuffer);
+
+    uint32_t offset = 0;
+    for (int x = SCREEN_WIDTH - 1; x >= 0; x--) {
+        for (int y = 0; y < SCREEN_HEIGHT; y++) {
+            uint8_t color = 255;
+
+            // Get color and scale up qr code
+            if (qrcodegen_getModule(qr0, x/4 - 5, y/4 - 4)) {
+                color = 0;
+            }
+
+            screenBuffer[offset++] = color;
+            screenBuffer[offset++] = color;
+            screenBuffer[offset++] = color;
+        }
+    }
 }

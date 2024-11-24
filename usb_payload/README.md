@@ -9,9 +9,13 @@ This is a simple payload, which can be booted over USB, displaying an image of a
 - Copy the `a.bin` to the newly appeared drive.
 - Copy the `MarkFile` to the drive.
 
-The alarmo should disconnect from the PC and a picture of a cat is displayed on the screen.
+The Alarmo should disconnect from the PC and a picture of a cat is displayed on the screen.  
+You can turn the dial to fade through different colors, press the back button to display a QR code with [AES key data](../key_bruteforcer/README.md), or press down on the dial to make the cat return.
 
 ## Building
 - Make sure to clone the repo with all submodules.
 - Enter the AES key and IV in the `key.py` file.
 - Run `make`.
+
+## Credits
+- https://github.com/nayuki/QR-Code-generator for QR Code generation.
