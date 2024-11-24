@@ -83,7 +83,7 @@ def verify(f):
     size -= 0x100
 
     # Calculate body hash
-    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV)
+    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV[:12])
     sha256 = hashlib.sha256()
     while size > 0:
         to_read = min(size, 0x10000)
@@ -109,7 +109,7 @@ def encrypt(f, outf):
     # Add file signature
     outf.write(b'CIPH\x00\x00\x00\x00')
 
-    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV)
+    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV[:12])
     while size > 0:
         to_read = min(size, 0x10000)
 
@@ -134,7 +134,7 @@ def decrypt(f, outf):
     # Don't count signature
     size -= 0x100
 
-    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV)
+    cipher = AES.new(AES_KEY, AES.MODE_CTR, nonce=AES_IV[:12])
     sha256 = hashlib.sha256()
     while size > 0:
         to_read = min(size, 0x10000)
@@ -166,8 +166,8 @@ def main(argc, argv):
     if argc < 3:
         print_usage(argv[0])
 
-    if len(AES_KEY) == 0 or len(AES_IV) == 0:
-        print('Update AES_KEY and AES_IV in key.py')
+    if len(AES_KEY) != 16 or len(AES_IV) < 12:
+        print('Error: Update AES_KEY and AES_IV in key.py')
         sys.exit(1)
 
     f = open(argv[2], 'rb')

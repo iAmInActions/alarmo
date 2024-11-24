@@ -14,7 +14,7 @@ You can turn the dial to fade through different colors, press the back button to
 
 ## Building
 - Make sure to clone the repo with all submodules.
-- Enter the AES key and IV in the `key.py` file.
+- Enter the AES key and IV in the `key.py` file (as a hex string between the quotes).
 - Run `make`.
 
 ## Credits
