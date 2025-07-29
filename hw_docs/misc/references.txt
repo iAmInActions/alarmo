@@ -1,0 +1,3 @@
+Finding the I2S DAC chip (max98357a): https://www.reddit.com/r/AskElectronics/comments/1mbrlrb/looking_to_identify_dac_chip_akm_133/
+
+I2S example code for STM32: https://github.com/danieleff/STM32GENERIC/blob/master/STM32/libraries/BoardExamples/examples/BlackF407VE/I2S_MAX98357A_sineWave/I2S_MAX98357A_sineWave.ino
